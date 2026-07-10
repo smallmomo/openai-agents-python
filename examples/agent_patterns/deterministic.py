@@ -1,9 +1,11 @@
 import asyncio
+import json
 
 from pydantic import BaseModel
 
 from agents import Agent, Runner, trace
 from examples.auto_mode import input_with_fallback
+from examples.volcengine_config import get_model, setup_volcengine
 
 """
 This example demonstrates a deterministic flow, where each step is performed by an agent.
@@ -18,6 +20,7 @@ This example demonstrates a deterministic flow, where each step is performed by 
 story_outline_agent = Agent(
     name="story_outline_agent",
     instructions="Generate a very short story outline based on the user's input.",
+    model=None,  # Will be set at runtime after client is configured
 )
 
 
@@ -28,18 +31,31 @@ class OutlineCheckerOutput(BaseModel):
 
 outline_checker_agent = Agent(
     name="outline_checker_agent",
-    instructions="Read the given story outline, and judge the quality. Also, determine if it is a scifi story.",
-    output_type=OutlineCheckerOutput,
+    instructions=(
+        "Read the given story outline, and judge the quality. Also, determine if it is a scifi story. "
+        "You MUST output ONLY a valid JSON object with the following fields: "
+        '{"good_quality": true/false, "is_scifi": true/false}. '
+        "Do not include any other text, markdown formatting, or code fences."
+    ),
+    model=None,  # Will be set at runtime after client is configured
 )
 
 story_agent = Agent(
     name="story_agent",
     instructions="Write a short story based on the given outline.",
-    output_type=str,
+    model=None,  # Will be set at runtime after client is configured
 )
 
 
 async def main():
+    setup_volcengine()
+    model = get_model()
+
+    # 为所有 agent 设置火山引擎模型
+    story_outline_agent.model = model
+    outline_checker_agent.model = model
+    story_agent.model = model
+
     input_prompt = input_with_fallback(
         "What kind of story do you want? ",
         "Write a short sci-fi story.",
@@ -60,13 +76,21 @@ async def main():
             outline_result.final_output,
         )
 
-        # 3. Add a gate to stop if the outline is not good quality or not a scifi story
-        assert isinstance(outline_checker_result.final_output, OutlineCheckerOutput)
-        if not outline_checker_result.final_output.good_quality:
+        # 3. Parse the JSON output (model doesn't support json_schema response_format)
+        raw_output = outline_checker_result.final_output.strip()
+        # Remove markdown code fences if present
+        if raw_output.startswith("```"):
+            raw_output = raw_output.split("\n", 1)[-1]
+            if raw_output.endswith("```"):
+                raw_output = raw_output[:-3]
+            raw_output = raw_output.strip()
+        checker_output = OutlineCheckerOutput.model_validate_json(raw_output)
+
+        if not checker_output.good_quality:
             print("Outline is not good quality, so we stop here.")
             exit(0)
 
-        if not outline_checker_result.final_output.is_scifi:
+        if not checker_output.is_scifi:
             print("Outline is not a scifi story, so we stop here.")
             exit(0)
 

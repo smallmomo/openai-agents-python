@@ -3,6 +3,7 @@ import asyncio
 from pydantic import BaseModel
 
 from agents import Agent, Runner, Usage, function_tool
+from examples.volcengine_config import get_model, setup_volcengine
 
 
 class Weather(BaseModel):
@@ -28,10 +29,13 @@ def print_usage(usage: Usage) -> None:
 
 
 async def main() -> None:
+    setup_volcengine()
+
     agent = Agent(
         name="Usage Demo",
         instructions="You are a concise assistant. Use tools if needed.",
         tools=[get_weather],
+        model=get_model(),
     )
 
     result = await Runner.run(agent, "What's the weather in Tokyo?")
